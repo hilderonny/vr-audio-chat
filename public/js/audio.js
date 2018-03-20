@@ -1,25 +1,25 @@
 
 var audio = {
     rtc: null,
-    // clients: {},
-    // videolisttag: null,
-    // localvideotag: document.createElement("video"),
-    // // Called when the page is loaded and a list of already connected clients is fetched
-    // onclientlist: function(clientlist) {
-    //     videowall.clients = clientlist;
-    // },
-    // // Called when a new remote client connects
-    // onclientconnected: function(client) {
-    //     videowall.clients[client.id] = client;
-    // },
-    // // Called when a remote client disconnected
-    // onclientdisconnected: function(client) {
-    //     client.videotag.pause();
-    //     client.videotag.src = "";
-    //     client.videotag.parentNode.removeChild(client.videotag);
-    //     delete videowall.clients[client.id];
-    // },
+    clients: {},
+    audiolevelstag: null,
+    onclientlist: function(clientlist) {
+        audio.clients = clientlist;
+    },
+    onclientconnected: function(client) {
+        audio.clients[client.id] = client;
+    },
+    onclientdisconnected: function(client) {
+        client.audiotag.pause();
+        client.audiotag.src = "";
+        audio.audiolevelstag.removeChild(client.audiotag);
+        audio.audiolevelstag.removeChild(client.leveltag);
+        delete audio.clients[client.id];
+    },
     onlocalstream: function(stream) {
+        var selftag = document.createElement("div");
+        audio.audiolevelstag.appendChild(selftag);
+
         var audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         var analyser = audioCtx.createAnalyser();
         analyser.fftSize = 32;
@@ -27,6 +27,7 @@ var audio = {
         var dataArray = new Float32Array(bufferLength);
         var min = analyser.minDecibels;
         var istalking = false;
+        selftag.innerHTML = "SELF: " + istalking;
         var source = audioCtx.createMediaStreamSource(stream);
         source.connect(analyser);
         analyser.connect(audioCtx.destination);
@@ -38,34 +39,49 @@ var audio = {
             var istalkingnow = max > min / 2;
             if (istalking !== istalkingnow) {
                 istalking = istalkingnow;
-                console.log(istalking);
+                selftag.innerHTML = "SELF: " + istalking;
+                audio.rtc.socket.emit('Message', { // Inform others about my Gebrabbel
+                    type: 'talking',
+                    content: istalking
+                });
             }
         }
 
         window.setInterval(analyze, 100);
 
-    // videowall.localvideotag.src = window.URL.createObjectURL(stream);
-        // Object.keys(videowall.clients).forEach(function(key) {
-        //     videowall.rtc.call(key);
-        // });
+        Object.keys(audio.clients).forEach(function(key) {
+            audio.rtc.call(key);
+        });
+
     },
-    // // Called when a video stream of a remote client came in
-    // onremotestream: function(event) {
-    //     var client = videowall.clients[event.connection.remoteClientId];
-    //     client.videotag = document.createElement("video");
-    //     client.videotag.autoplay = "autoplay";
-    //     client.videotag.src = window.URL.createObjectURL(event.stream);
-    //     videowall.videolisttag.appendChild(client.videotag);
-    // },
+    onremotestream: function(event) {
+        var client = audio.clients[event.connection.remoteClientId];
+        client.audiotag = document.createElement("audio");
+        client.audiotag.autoplay = "autoplay";
+        client.audiotag.src = window.URL.createObjectURL(event.stream);
+        client.leveltag = document.createElement("div");
+        client.leveltag.innerHTML = client.id + ": false";
+        audio.audiolevelstag.appendChild(client.audiotag);
+        audio.audiolevelstag.appendChild(client.leveltag);
+    },
+    onmessage: function(message) {
+        if (message.type !== "talking") return; // Handle only talking information
+        var client = audio.clients[message.from];
+        if (client.leveltag) client.leveltag.innerHTML = client.id + ": " + message.content;
+    },
     init: function(selector) {
+
+        audio.audiolevelstag = document.querySelector("#audiolevels");
 
         // Init WebRTC
         audio.rtc = new WebRTC({ audio: true }, { autoacceptincomingcalls: true });
-        // audio.rtc.on("clientList", videowall.onclientlist);
-        // audio.rtc.on("clientConnected", videowall.onclientconnected);
-        // audio.rtc.on("clientDisconnected", videowall.onclientdisconnected);
+        audio.rtc.on("clientList", audio.onclientlist);
+        audio.rtc.on("clientConnected", audio.onclientconnected);
+        audio.rtc.on("clientDisconnected", audio.onclientdisconnected);
         audio.rtc.on("localStream", audio.onlocalstream);
-        // audio.rtc.on("remoteStream", videowall.onremotestream);
+        audio.rtc.on("remoteStream", audio.onremotestream);
+
+        audio.rtc.socket.on("Message", audio.onmessage);
 
     },
 };
