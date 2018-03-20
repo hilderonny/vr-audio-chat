@@ -1,0 +1,15 @@
+<html>
+    <head>
+        <script src="/socket.io/socket.io.js"></script>
+        <script src="js/webrtc.js"></script>
+        <script src="js/audio.js"></script>
+        <script>
+            window.addEventListener("load", function() {
+                audio.init("#audiolevels");
+            });
+        </script>
+    </head>
+    <body>
+        <div id="audiolevels"></div>
+    </body>
+</html>
