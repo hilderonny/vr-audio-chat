@@ -1,53 +1,108 @@
 
-var videowall = {
+var vraudiochat = {
     rtc: null,
     clients: {},
-    videolisttag: null,
-    localvideotag: document.createElement("video"),
-    // Called when the page is loaded and a list of already connected clients is fetched
+    positions: [null, null, null, null],
+    scenetag: null,
+    assetstag: null,
     onclientlist: function(clientlist) {
-        videowall.clients = clientlist;
+        vraudiochat.clients = clientlist;
     },
-    // Called when a new remote client connects
     onclientconnected: function(client) {
-        videowall.clients[client.id] = client;
+        vraudiochat.clients[client.id] = client;
     },
-    // Called when a remote client disconnected
     onclientdisconnected: function(client) {
-        client.videotag.pause();
-        client.videotag.src = "";
-        client.videotag.parentNode.removeChild(client.videotag);
-        delete videowall.clients[client.id];
+        client.audiotag.pause();
+        client.audiotag.src = "";
+        vraudiochat.assetstag.removeChild(client.audiotag);
+        vraudiochat.scenetag.removeChild(client.avatar);
+        delete vraudiochat.clients[client.id];
+        if (client.position >= 0) vraudiochat.positions[client.position] = false;
     },
-    // Called then the local video stream is ready
     onlocalstream: function(stream) {
-        videowall.localvideotag.src = window.URL.createObjectURL(stream);
-        Object.keys(videowall.clients).forEach(function(key) {
-            videowall.rtc.call(key);
-        });
-    },
-    // Called when a video stream of a remote client came in
-    onremotestream: function(event) {
-        var client = videowall.clients[event.connection.remoteClientId];
-        client.videotag = document.createElement("video");
-        client.videotag.autoplay = "autoplay";
-        client.videotag.src = window.URL.createObjectURL(event.stream);
-        videowall.videolisttag.appendChild(client.videotag);
-    },
-    init: function(selector) {
+        vraudiochat.createavatar();
 
-        // Init local video
-        videowall.videolisttag = document.querySelector(selector);
-        videowall.localvideotag.autoplay = "autoplay";
-        videowall.videolisttag.appendChild(videowall.localvideotag);
+        var audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        var analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 32;
+        var bufferLength = analyser.frequencyBinCount;
+        var dataArray = new Float32Array(bufferLength);
+        var min = analyser.minDecibels;
+        var istalking = false;
+        // selftag.innerHTML = "SELF: " + istalking;
+        var source = audioCtx.createMediaStreamSource(stream);
+        source.connect(analyser);
+        analyser.connect(audioCtx.destination);
+
+        function analyze() {
+            analyser.getFloatFrequencyData(dataArray);
+            var max = min;
+            dataArray.forEach(function(val) { if (val > max) max = val; });
+            var istalkingnow = max > min / 2;
+            if (istalking !== istalkingnow) {
+                istalking = istalkingnow;
+                // selftag.innerHTML = "SELF: " + istalking;
+                vraudiochat.rtc.socket.emit('Message', { // Inform others about my Gebrabbel
+                    type: 'talking',
+                    content: istalking
+                });
+            }
+        }
+
+        window.setInterval(analyze, 100);
+
+        Object.keys(vraudiochat.clients).forEach(function(key) {
+            vraudiochat.rtc.call(key);
+        });
+
+    },
+    onremotestream: function(event) {
+        var client = vraudiochat.clients[event.connection.remoteClientId];
+        client.audiotag = document.createElement("audio");
+        client.audiotag.autoplay = "autoplay";
+        client.audiotag.src = window.URL.createObjectURL(event.stream);
+        vraudiochat.assetstag.appendChild(client.audiotag);
+        vraudiochat.createavatar(client);
+    },
+    onmessage: function(message) {
+        if (message.type !== "talking") return; // Handle only talking information
+        var client = vraudiochat.clients[message.from];
+        console.log(message.content);
+        if (client.avatar) client.avatar.setAttribute("color", message.content ? "#00CC00" : "#EF2D5E");
+        // if (client.leveltag) client.leveltag.innerHTML = client.id + ": " + message.content;
+    },
+    createavatar: function(client) {
+        var avatar = document.createElement("a-sphere");
+        if (client) { // Remote client
+            client.avatar = avatar;
+        } else { // Player himself
+            avatar.setAttribute("camera", "");
+            avatar.setAttribute("look-controls", "");
+            avatar.setAttribute("wasd-controls", "");
+        }
+        avatar.setAttribute("color", "#EF2D5E");
+        var position = "0 1.25 0";
+        if (!vraudiochat.positions[0]) { position = "0 1.25 4"; vraudiochat.positions[0] = true; if (client) client.position = 0; }
+        else if (!vraudiochat.positions[1]) { position = "4 1.25 0"; vraudiochat.positions[1] = true; if (client) client.position = 1; }
+        else if (!vraudiochat.positions[2]) { position = "0 1.25 -4"; vraudiochat.positions[2] = true; if (client) client.position = 2; }
+        else if (!vraudiochat.positions[3]) { position = "-4 1.25 0"; vraudiochat.positions[3] = true; if (client) client.position = 3; }
+        avatar.setAttribute("position", position);
+        vraudiochat.scenetag.appendChild(avatar);
+    },
+    init: function() {
+
+        vraudiochat.scenetag = document.querySelector("a-scene");
+        vraudiochat.assetstag = document.querySelector("a-assets");
 
         // Init WebRTC
-        videowall.rtc = new WebRTC({ audio: true, video: true}, { autoacceptincomingcalls: true, makethumbnails: false });
-        videowall.rtc.on("clientList", videowall.onclientlist);
-        videowall.rtc.on("clientConnected", videowall.onclientconnected);
-        videowall.rtc.on("clientDisconnected", videowall.onclientdisconnected);
-        videowall.rtc.on("localStream", videowall.onlocalstream);
-        videowall.rtc.on("remoteStream", videowall.onremotestream);
+        vraudiochat.rtc = new WebRTC({ audio: true }, { autoacceptincomingcalls: true });
+        vraudiochat.rtc.on("clientList", vraudiochat.onclientlist);
+        vraudiochat.rtc.on("clientConnected", vraudiochat.onclientconnected);
+        vraudiochat.rtc.on("clientDisconnected", vraudiochat.onclientdisconnected);
+        vraudiochat.rtc.on("localStream", vraudiochat.onlocalstream);
+        vraudiochat.rtc.on("remoteStream", vraudiochat.onremotestream);
+
+        vraudiochat.rtc.socket.on("Message", vraudiochat.onmessage);
 
     },
 };
